@@ -163,6 +163,11 @@ h3:first-child{margin-top:0}
 #modal,#pmodal{position:fixed;inset:0;background:#000a;display:none;align-items:center;justify-content:center;z-index:50;padding:20px}
 #modal.on,#pmodal.on{display:flex}
 #pmodal{z-index:60}
+tr.fix td{background:#241f12;border-left:3px solid var(--gold);font-size:12.5px;
+  text-align:left;padding:8px 12px;line-height:1.6}
+@media(max-width:700px){#posOut tr.fix{background:#241f12;border-color:#5c4a20;margin-top:-6px}
+  #posOut tr.fix td{display:block;text-align:left;border:none}
+  #posOut tr.fix td::before{content:none}}
 .nlist{max-height:230px;overflow-y:auto;border:1px solid var(--line);border-radius:6px;margin-bottom:12px}
 .nrow{display:flex;align-items:center;gap:9px;padding:7px 10px;cursor:pointer;border-bottom:1px solid #221d17;font-size:13px}
 .nrow:last-child{border-bottom:none}
@@ -236,6 +241,19 @@ code{background:var(--bg3);padding:1px 5px;border-radius:4px;font-size:12px;colo
 
 <section class="panel on" id="p-today">
   <div id="todayOut"></div>
+  <h3 style="margin-top:22px">💸 Vienkartinis treidas</h3>
+  <p class="hint">Turi laisvų pinigų ir vieną laisvą slotą? Įrašyk <b>tikslią sumą</b> — parodysiu geriausius variantus būtent jai, neskaidydamas biudžeto.</p>
+  <div style="display:flex;gap:9px;flex-wrap:wrap;align-items:flex-end;max-width:640px">
+    <div class="f"><label>Turiu laisvų</label><input id="oneSum" value="1330k" style="width:120px"></div>
+    <div class="f"><label>Noriu apsisukti per</label><select id="oneMin" style="width:120px">
+      <option value="10">10 min</option><option value="20" selected>20 min</option>
+      <option value="45">45 min</option><option value="120">2 val.</option>
+      <option value="240">4 val.</option><option value="720">12 val.</option>
+      <option value="1440">parą</option></select></div>
+    <div class="f"><label>&nbsp;</label><button id="oneGo" class="primary">Rasti</button></div>
+  </div>
+  <div id="oneOut" style="margin-top:10px"></div>
+
   <h3 style="margin-top:22px">🔍 Ieškoti daikto</h3>
   <p class="hint">Įrašyk pavadinimą ir spustelk — pamatysi kainų grafiką, maržą, apyvartą ir ar apsimoka flipinti. Gali ieškoti kelių iš karto per kablelį.</p>
   <input id="tSearch" placeholder="pvz. whip, dragon bones, snapdragon…" autocomplete="off"
@@ -258,6 +276,7 @@ code{background:var(--bg3);padding:1px 5px;border-radius:4px;font-size:12px;colo
       <option value="300">iki 5 min</option><option value="600" selected>iki 10 min</option>
       <option value="1800">iki 30 min</option><option value="99999999">nesvarbu</option></select></div>
     <div class="grow"></div>
+    <div class="f"><label>&nbsp;</label><button id="presetFast" class="primary" title="Nustato viską greitam flipinimui: abi pusės aktyvios, trumpas apsisukimas, švieži duomenys">⚡ Greitam flipinimui</button></div>
     <div class="f"><label>&nbsp;</label><button id="reset">Išvalyti</button></div>
     <div class="chipbar"><label>Sąlygos — gali įjungti kelias vienu metu</label><div id="chips"></div></div>
   </div>
@@ -423,6 +442,7 @@ if(cfg.fmin===undefined)cfg.fmin='30';
 if(!cfg.slots)cfg.slots=4;
 if(!cfg.goal)cfg.goal='1m';
 if(!cfg.checks)cfg.checks=3;
+if(cfg.speed===undefined)cfg.speed=0;
 if(cfg.svol==='300')cfg.svol='100';
 if(cfg.sminp==='1000')cfg.sminp='200';
 if(!Array.isArray(cfg.chips))cfg.chips=['sane','nodown'];  // perkėlimas iš senų nustatymų
@@ -455,6 +475,8 @@ function fmt(n){
   return s+Math.round(a).toString();
 }
 function full(n){return n==null?'':Math.round(n).toLocaleString('lt-LT')+' gp';}
+// tikslus skaičius be „gp" – kainoms, kurias reikia įvesti į žaidimą
+function exact(n){return n==null||!isFinite(n)?'–':Math.round(n).toLocaleString('lt-LT');}
 function pct(n){return (n>0?'+':'')+n.toFixed(1)+'%';}
 function ago(t){
   if(!t)return '–';
@@ -636,16 +658,18 @@ function build(){
    Iš to gaunamas realus laikas: nupirkti + parduoti.                              */
 const CAPTURE=0.30;
 function plan(r,bank,maxMin){
+  const rp=recPrices(r);                       // pelnas skaičiuojamas nuo RODOMŲ kainų
   const fs=Math.max(0.5,r.volSell1*CAPTURE), fb=Math.max(0.5,r.volBuy1*CAPTURE);
   const flowRate=1/(1/fs+1/fb);                   // vnt./val., ką pajėgia rinka
   const limitRate=r.limit?r.limit/4:flowRate;     // 4 val. pirkimo limitas – griežta lubos
   const rate=Math.min(flowRate,limitRate);        // realus tempas
   let q=Math.floor(rate*(maxMin/60));
-  if(r.limit)q=Math.min(q,r.limit);
+  if(r.limit)q=Math.min(q,limitLeft(r));      // kiek dar leidžia 4 val. limitas
   if(bank>0)q=Math.min(q,Math.floor(bank/Math.max(1,r.buy+1)));
   q=Math.max(0,q);
   const minutes=q>0?q/rate*60:0;
-  return {q,minutes,rate,profit:q*r.margin,perHour:q>0?rate*r.margin:0,cost:q*r.buy};
+  return {q,minutes,rate,unit:rp.net,recBuy:rp.b,recSell:rp.s,
+    profit:q*rp.net,perHour:q>0?rate*rp.net:0,cost:q*rp.b};
 }
 function maxMin(){return Math.max(2,parseFloat(cfg.fmin)||30);}
 // senas skaičiavimas 4 val. limito langui – naudojamas daikto lange
@@ -678,6 +702,7 @@ const CHIPS=[
   {k:'buy',   t:'🔥 Stipriai perka',      g:'p', d:'Per pastarąją valandą daugiau nei 65 % sandorių – skubūs pirkimai, ir aktyvumas didesnis nei įprastai', f:r=>r.pressure>=65&&r.heat>=1.3},
   {k:'buyx',  t:'🚀 Perka labai stipriai',g:'p', d:'Virš 75 % skubių pirkimų, aktyvumas 1,5× didesnis nei įprastai ir kaina kyla', f:r=>r.pressure>=75&&r.heat>=1.5&&r.trend>0},
   {k:'sell',  t:'📉 Stipriai parduoda',   g:'p', d:'Vyrauja skubūs pardavimai – kaina greičiausiai kris', f:r=>r.pressure<=35&&r.heat>=1.3},
+  {k:'bal',   t:'⚖️ Abi pusės aktyvios',        d:'Perkančių ir parduodančių maždaug po lygiai (35–65 %). Tada ir tavo pirkimas, ir pardavimas užsipildo panašiu greičiu – geriausia greitam flipinimui.', f:r=>r.pressure>=35&&r.pressure<=65},
   {k:'sane',  t:'✅ Tik patikimos kainos',        d:'Pakankamai gyva rinka (bent 15 sandorių per valandą kiekvienoje pusėje), paskutiniai sandoriai atitinka valandos vidurkį, skirtumas iki 15 %', f:r=>r.sane&&!r.thin&&r.spread<=15},
   {k:'nodown',t:'⬇️ Slėpti krentančius',          d:'Praleidžia daiktus, kurių kaina per parą krito daugiau nei 3 %', f:r=>r.trend>-3},
   {k:'up',    t:'📈 Tik kylančius',                d:'Kaina per parą pakilusi bent 2 %', f:r=>r.trend>=2},
@@ -706,10 +731,51 @@ function todayCycleHours(){return 24/Math.max(1,parseInt(cfg.checks)||3);}
 /* Rodomos kainos su ±1 gp pataisa IR pelnas, suskaičiuotas būtent iš tų kainų.
    Anksčiau pelnas buvo skaičiuojamas iš r.margin, o rodomos kainos – su ±1,
    todėl skaičiai galėjo nesutapti ir net būti neigiami.                        */
+/* GREITIS vs MARŽA. Kantriausia kaina (pirkti low+1) duoda didžiausią pelną, bet tavo
+   offer'is stovi eilėje ir gali neužsipildyti. Atiduodamas dalį skirtumo, atsistoji
+   eilės priekyje ir užsipildai greitai. `speed` – kokią skirtumo dalį atiduodi.        */
 function recPrices(r){
   const gap=r.sell-r.buy;
-  const b=gap>=3?r.buy+1:r.buy, s=gap>=3?r.sell-1:r.sell;
-  return {b,s,net:s-taxOf(s,r.name)-b};
+  if(gap<3)return {b:r.buy,s:r.sell,net:r.sell-taxOf(r.sell,r.name)-r.buy,give:0};
+  const a=Math.max(0,Math.min(0.6,parseFloat(cfg.speed)||0));
+  const give=Math.floor(gap*a/2);
+  const b=r.buy+1+give, s=r.sell-1-give;
+  return {b,s,net:s-taxOf(s,r.name)-b,give};
+}
+/* 4 VAL. PIRKIMO LIMITAS. Žaidimas leidžia nupirkti tik tam tikrą kiekį per 4 val.
+   Programa skaičiuoja, kiek jau pirkai (iš „Pirkau" įrašų ir užbaigtų flipų), ir
+   nebesiūlo to, ko nebegali. Langas skaičiuojamas nuo pirmo pirkimo, kaip žaidime. */
+let limitMap={};
+function rebuildLimits(){
+  const cutoff=Date.now()-4*36e5;
+  limitMap={};
+  const add=(id,qty,t)=>{
+    if(!t||t<cutoff)return;
+    const e=limitMap[id]||(limitMap[id]={used:0,first:t});
+    e.used+=qty; e.first=Math.min(e.first,t);
+  };
+  for(const p of positions)add(p.id,p.qty,p.t);
+  for(const h of history)add(h.id,h.qty,h.started||h.t);
+}
+function limitLeft(r){
+  if(!r||!r.limit)return Infinity;
+  const e=limitMap[r.id];
+  return Math.max(0,r.limit-(e?e.used:0));
+}
+function limitReset(id){const e=limitMap[id];return e?e.first+4*36e5:null;}
+
+/* PAROS LUBA vienam daiktui. Kad ir kaip dažnai tikrintum, per parą to paties daikto
+   nupirksi ne daugiau nei: 4 val. limitas × 6 langai, ir ne daugiau, nei rinka pajėgia.
+   Be šito dienos prognozė augtų be galo – dauginant ratus.                            */
+function dayCapUnits(r){
+  const byLimit=r.limit?r.limit*6:Infinity;
+  const byFlow=Math.min(r.volSell24||0,r.volBuy24||0)*CAPTURE;
+  return Math.max(0,Math.min(byLimit,byFlow));
+}
+// Kokią srauto dalį sudarytų tavo kiekis – jei per didelė, offer'is kabės
+function flowShare(r,q,hours){
+  const fs=(r.volSell24||0)/24*hours, fb=(r.volBuy24||0)/24*hours;
+  return {pirkimo:fs>0?q/fs*100:999, pardavimo:fb>0?q/fb*100:999};
 }
 function pickToday(){
   const bank=parseGp(cfg.bank), slots=parseInt(cfg.slots)||4;
@@ -723,7 +789,8 @@ function pickToday(){
 }
 // ar daiktas ŠIUO METU tinka ramiam dienos planui
 function viableToday(r){
-  return r.sane&&!r.thin&&r.hasDay&&r.trend>-3&&r.spread<=15&&r.age<1800&&recPrices(r).net>0;
+  return r.sane&&!r.thin&&r.hasDay&&r.trend>-3&&r.spread<=15&&r.age<1800
+    &&recPrices(r).net>0&&limitLeft(r)>0;      // išnaudoto limito daiktų nesiūlom
 }
 // planas + kainos + pelnas, suskaičiuoti iš TŲ PAČIŲ rodomų kainų
 function withPlan(r,bank,hrs){
@@ -785,12 +852,17 @@ function repeatEmptyMsg(){
 /* Planas laikomas visą dieną, KAD NEŠOKINĖTŲ. Bet kainos juda, tad daiktas gali
    nustoti tikti (marža dingsta, kaina ima kristi). Tokie tyliai NEPALIEKAMI –
    jie pakeičiami geriausiu tinkamu, o vartotojui pasakoma, kas pasikeitė.        */
-let swapped=[];
+let swapped=[], bankRebuilt=false;
 function getTodayPlan(force){
   const saved=load('dayplan',null);
   const bank=parseGp(cfg.bank), slots=parseInt(cfg.slots)||4;
   const per=bank>0?Math.floor(bank/slots):0, hrs=todayCycleHours();
-  swapped=[];
+  swapped=[];bankRebuilt=false;
+  /* Jei biudžetas pastebimai pasikeitė, planą reikia rinkti iš naujo: su didesniais
+     pinigais apsimoka visai kiti, brangesni daiktai. Anksčiau planas likdavo užšaldytas
+     ir tiesiog didindavo kiekius tų pačių pigių daiktų.                                */
+  const senasBank=saved&&saved.bank||0;
+  if(senasBank>0&&bank>0&&(bank/senasBank>1.2||bank/senasBank<0.8)){force=true;bankRebuilt=true;}
   if(!force&&saved&&saved.date===todayKey()&&saved.ids&&saved.ids.length){
     const keep=[],drop=[];
     for(const id of saved.ids){
@@ -808,18 +880,19 @@ function getTodayPlan(force){
         keep.push(cand);have.add(cand.id);
       }
       swapped=drop;
-      save('dayplan',{date:todayKey(),ids:keep.map(r=>r.id)});
+      save('dayplan',{date:todayKey(),bank,ids:keep.map(r=>r.id)});
     }
     if(keep.length)return keep;
   }
   const list=pickToday();
-  save('dayplan',{date:todayKey(),ids:list.map(r=>r.id)});
+  save('dayplan',{date:todayKey(),bank,ids:list.map(r=>r.id)});
   return list;
 }
 function renderToday(){
   const el=$('#todayOut');if(!el||!S.rows.length)return;
   const goal=parseGp(cfg.goal)||1000000;
   const checks=Math.max(1,parseInt(cfg.checks)||3);
+  const slots=parseInt(cfg.slots)||4;
   const all=getTodayPlan(false);
   // jau nupirktų daiktų plane neberodom – jie perkelti į „Mano flipai"
   const busy=new Set(positions.map(p=>p.id));
@@ -828,7 +901,18 @@ function renderToday(){
   const midnight=new Date();midnight.setHours(0,0,0,0);
   const done=history.filter(h=>h.t>=midnight.getTime()).reduce((s,h)=>s+h.profit,0);
   const perCycle=all.reduce((s,r)=>s+r.profit,0);
-  const perDay=perCycle*checks;
+  // dienos prognozė su paros luba: dažnesnis tikrinimas padeda tik iki tos ribos
+  // Vienam pilnam treidui reikia DVIEJŲ apsilankymų (pastatyti pirkimą, paskui pardavimą),
+  // tad per parą vienas slotas apsuka checks/2 treidų, ne checks.
+  const treiduPerPara=checks/2;
+  let capped=0;
+  const perDayReal=all.reduce((s,r)=>{
+    const cap=dayCapUnits(r)*r.unit;
+    const naive=r.profit*treiduPerPara;
+    if(naive>cap)capped++;
+    return s+Math.min(naive,cap);
+  },0);
+  const perDay=perDayReal;
   const pctDone=Math.min(100,goal>0?done/goal*100:0);
   const bank=parseGp(cfg.bank);
   el.innerHTML=`
@@ -849,24 +933,77 @@ function renderToday(){
       <div class="tset">
         <label>Tikslas <input id="tGoal" value="${cfg.goal||'1m'}"></label>
         <label>Biudžetas <input id="tBank" value="${cfg.bank}"></label>
-        <label>Tikrinsiu per dieną
-          <select id="tChecks">${[1,2,3,4,6].map(n=>`<option value="${n}"${n===checks?' selected':''}>${n} k.</option>`).join('')}</select></label>
+        <label title="Kas kiek laiko grįši prie GE. Dažniau = daugiau ratų, bet tik iki paros lubos.">Tikrinsiu
+          <select id="tChecks" style="width:118px">${
+            [[1,'1× (kas 24 val.)'],[2,'2× (kas 12 val.)'],[3,'3× (kas 8 val.)'],[4,'4× (kas 6 val.)'],
+             [6,'6× (kas 4 val.)'],[8,'8× (kas 3 val.)'],[12,'12× (kas 2 val.)'],[24,'24× (kas 1 val.)'],
+             [48,'48× (kas 30 min)']]
+            .map(([n,t])=>`<option value="${n}"${n===checks?' selected':''}>${t}</option>`).join('')}</select></label>
         <label>GE slotai
           <select id="tSlots">${[2,3,4,5,6,7,8].map(n=>`<option value="${n}"${n===(parseInt(cfg.slots)||4)?' selected':''}>${n}</option>`).join('')}</select></label>
+        <label title="Kantriai = didžiausias pelnas, bet offer'is gali ilgai kabėti. Greitai = atiduodi dalį skirtumo, bet užsipildo.">Pildymas
+          <select id="tSpeed" style="width:112px">
+            <option value="0"${+cfg.speed===0?' selected':''}>Kantriai</option>
+            <option value="0.3"${+cfg.speed===0.3?' selected':''}>Vidutiniškai</option>
+            <option value="0.6"${+cfg.speed===0.6?' selected':''}>Greitai</option>
+          </select></label>
       </div>
     </div>
 
+    ${(()=>{
+      const bl=Object.keys(limitMap).map(id=>{
+        const r=S.rows.find(x=>x.id===+id);
+        if(!r||!r.limit||limitLeft(r)>0)return null;
+        return `<b>${r.name}</b> <span class="d">(iki ${new Date(limitReset(r.id)).toLocaleTimeString('lt-LT',{hour:'2-digit',minute:'2-digit'})})</span>`;
+      }).filter(Boolean);
+      return bl.length?`<div class="warn">📦 <b>4 val. pirkimo limitas išnaudotas:</b> ${bl.join(', ')} —
+        šių daiktų programa nebesiūlo, kol limitas atsinaujins.</div>`:'';})()}
     ${taken?`<div class="tinfo" style="border-left-color:var(--green)">✅ <b>${taken}</b> ${taken===1?'daiktas jau nupirktas':'daiktai jau nupirkti'} —
       ${taken===1?'jis perkeltas':'jie perkelti'} į skiltį <b>Mano flipai</b>. Ten matai, kada parduoti.
       ${!list.length?'Visi šios dienos pirkimai atlikti — belieka laukti pardavimų.':''}</div>`:''}
     ${!all.length?'<div class="empty">Nepavyko sudaryti plano — patikrink, ar įrašytas biudžetas.</div>':!list.length?'':`
     <div class="tinfo" id="tinfoMain">
-      Pastatyk šiuos <b>${list.length}</b> pirkimus, grįžk po <b>${Math.round(todayCycleHours())} val.</b>,
-      pastatyk pardavimus. Vienas ratas duoda <b class="gold">${fmt(perCycle)} gp</b>;
-      ${checks} ratai per dieną — <b class="gold">${fmt(perDay)} gp</b>.
+      Pastatyk šiuos <b>${list.length}</b> pirkimus. Po <b>${Math.round(todayCycleHours())} val.</b>
+      grįžęs pastatyk pardavimus, o dar po <b>${Math.round(todayCycleHours())} val.</b> — surink ir pirk iš naujo.
+      <span class="d">(Slotas užimtas ir perkant, ir parduodant, tad vienam treidui reikia dviejų apsilankymų.)</span>
+      Vienas pilnas treidas duoda <b class="gold">${fmt(perCycle)} gp</b> už visus ${list.length} slotus;
+      per parą spėsi <b>${treiduPerPara===0.5?'pusę treido':treiduPerPara+' treidų'}</b> kiekvienam slotui —
+      <b class="gold">${fmt(perDay)} gp</b>.
       ${perDay<goal?`<span class="r">Tikslo ${fmt(goal)} taip nepasieksi — padidink biudžetą, slotų skaičių arba tikrinimų dažnį.</span>`
         :`<span class="g">To pakanka tavo tikslui.</span>`}
+      ${(()=>{
+        const T=todayCycleHours();
+        const vidPuse=all.length?all.reduce((s,r)=>s+(r.legHours||0),0)/all.length:0;
+        if(!vidPuse)return '';
+        const dirba=Math.min(100,vidPuse/T*100);
+        return dirba<70?`<br><span class="gold">⏳ Slotai stovi tušti.</span>
+          <span class="d">Viena pusė užsipildo per <b>${vidPuse.toFixed(1)} val.</b>, o tu grįžti tik po <b>${Math.round(T)} val.</b> —
+          likusias <b>${(T-vidPuse).toFixed(1)} val.</b> slotas nieko nedaro (išnaudojama ${Math.round(dirba)} %).
+          Arba grįžk dažniau, arba įdėk daugiau pinigų į tą patį slotą, kad pirkimas truktų ilgiau.</span>`
+          :`<br><span class="g">✓ Slotai išnaudojami gerai</span>
+            <span class="d">(pusė užsipildo per ${vidPuse.toFixed(1)} val., grįžti po ${Math.round(T)} val.).</span>`;})()}
+      <br><span class="d">Vidutiniškai <b class="gold">${fmt(Math.round(perCycle/Math.max(1,all.length)))}</b> už vieną treidą.
+      Šį skaičių dalija tavo nustatymai: biudžetas ${fmt(bank)} padalytas į <b>${slots}</b> slotus,
+      ciklas <b>${Math.round(todayCycleHours())} val.</b>${+cfg.speed>0?`, pildymas <b class="r">${+cfg.speed>=0.6?'greitai':'vidutiniškai'}</b>`:''}.</span>
+      ${+cfg.speed>0?(()=>{
+        const s0=cfg.speed;cfg.speed=0;
+        const kantrus=pickToday();
+        const vid=kantrus.length?Math.round(kantrus.reduce((a,b)=>a+b.profit,0)/kantrus.length):0;
+        cfg.speed=s0;
+        return vid>0?`<br><span class="g">💡 Perjungęs „Pildymas: Kantriai" gautum apie <b>${fmt(vid)}</b> už treidą
+          vietoj ${fmt(Math.round(perCycle/Math.max(1,all.length)))}.</span>
+          <span class="d">Offer'iai pildysis lėčiau, bet ir pelnas per dieną būna didesnis.</span>`:'';})():''}
+      ${checks>=8?`<br><span class="gold">⚠ Prognozė daroma darant prielaidą, kad <b>kiekvienas ratas užsipildo pilnai</b>.</span>
+        <span class="d">Kuo dažniau tikrini, tuo optimistiškesnis šis skaičius: konkuruoji dėl to paties srauto, offer'iai
+        pildosi ne akimirksniu, o tarp ratų yra spragų. Tikrą savo tempą pamatysi skiltyje
+        <b>Mano flipai → Mano geriausi daiktai</b> — ten rodoma reali vidutinė trukmė.</span>`:''}
+      ${capped?`<br><span class="gold">⚠ ${capped} iš ${all.length} daiktų jau atsimušė į paros lubą</span>
+        <span class="d">(4 val. pirkimo limitas × 6 langai arba rinkos srautas). Dažniau tikrinti jiems nebeduos daugiau —
+        vietoj to reikia <b>daugiau skirtingų daiktų</b> arba didesnio biudžeto.</span>`:''}
     </div>
+    ${bankRebuilt?`<div class="warn" style="border-left-color:var(--green)">💰 <b>Biudžetas pasikeitė — planas sudarytas iš naujo.</b>
+      Su kitokia suma apsimoka visai kiti daiktai: didesniems pinigams renkamasi brangesnius,
+      kurių tam pačiam kapitalui reikia mažiau vienetų.</div>`:''}
     ${swapped.length?`<div class="warn">🔄 Planas atnaujintas: ${swapped.map(d=>`<b>${d.name}</b>${d.why?' ('+d.why+')':''}`).join(', ')} —
       pakeista kitu daiktu. Jei šito jau nusipirkai, jis lieka skiltyje „Mano flipai".</div>`:''}
     <div class="steps">${list.map((r,i)=>`
@@ -879,6 +1016,12 @@ function renderToday(){
             <b class="g">${full(r.recBuy)}</b> <span class="d">— iš viso ${fmt(r.cost)} gp</span></div>
           <div class="sline"><span class="d">2. Parduok po</span> <b class="r">${full(r.recSell)}</b>
             <span class="d">· ${full(r.unit)} už vienetą · užsipildys maždaug per ${r.hours<1?Math.round(r.hours*60)+' min':r.hours.toFixed(1)+' val.'}</span></div>
+          ${(()=>{const L=limitLeft(r);
+            return r.limit&&L<r.limit?`<div class="sline gold" style="font-size:12px">
+              📦 4 val. limitas: liko <b>${L}</b> iš ${r.limit}
+              ${limitReset(r.id)?`<span class="d">· atsinaujins ${new Date(limitReset(r.id)).toLocaleTimeString('lt-LT',{hour:'2-digit',minute:'2-digit'})}</span>`:''}</div>`:'';})()}
+          ${(()=>{const f=flowShare(r,r.q,todayCycleHours());const m=Math.max(f.pirkimo,f.pardavimo);
+            return m>25?`<div class="sline r" style="font-size:12px">⚠ Tavo kiekis sudarytų ${Math.round(m)} % viso šio daikto srauto — gali neužsipildyti. Sumažink kiekį arba rinkis „Pildymas: greitai".</div>`:'';})()}
         </div>
         <div class="sprofit">
           <div class="tlabel">PELNAS</div>
@@ -949,6 +1092,16 @@ function renderSummary(){
       <td class="d">~${Math.round(p.minutes)} min</td>
       <td class="gold"><b>${fmt(p.perHour)}/val.</b></td>
       <td><button class="btn-buy" data-bought="${r.id}" data-q="${p.q}" data-p="${r.buy+1}">Pirkau</button></td></tr>`).join('')}</tbody></table>
+    ${(()=>{
+      const naudoja=list.reduce((s,x)=>s+x.p.cost,0);
+      if(!(bank>0)||naudoja>=bank*0.75)return '';
+      const liko=bank-naudoja;
+      return `<div class="bond" style="border-top-color:#5c4a20">
+        💰 Šie ${list.length} flipai sugeria tik <b>${fmt(naudoja)}</b> iš tavo <b>${fmt(bank)}</b> —
+        <b class="gold">${fmt(liko)} lieka nepanaudoti</b>.
+        <span class="d">Greitas flipinimas turi kapitalo lubą: daiktas sugeria tiek, kiek pajėgia jo rinka,
+        ir daugiau pinigų to nekeičia. Likutį dėk į skiltį <b>Brangesni</b> — ten vienas flipas trunka
+        valandas, bet sugeria milijonus.</span></div>`;})()}
     ${bondPrice?`<div class="bond">🪙 Bondas kainuoja <b>${full(bondPrice)}</b> →
       šiuo tempu <b class="gold">${hours<1?Math.round(hours*60)+' min':hours.toFixed(1)+' val.'}</b> aktyvaus flipinimo
       <span class="d">(reikia pačiam statyti ir tikrinti offer'ius; palikus be priežiūros bus lėčiau)</span></div>`:''}
@@ -978,10 +1131,13 @@ function baseRows(){
   const minVol=parseGp(cfg.fvol), minM=parseGp(cfg.fmargin), minRoi=parseFloat(cfg.froi)||0;
   const maxP=parseGp(cfg.fmax)||bank||Infinity;
   const maxAge=parseFloat(cfg.fage);
-  return S.rows.filter(r=>
-    r.vol1h>=minVol && r.margin>=minM && r.roi>=minRoi && r.buy<=maxP && r.age<=maxAge &&
-    (!terms.length||terms.some(t=>r.name.toLowerCase().includes(t)))
-  );
+  // marža ir ROI tikrinami pagal REALIAI statomas kainas, ne pagal žalias rinkos
+  return S.rows.filter(r=>{
+    const rp=recPrices(r);
+    return r.vol1h>=minVol && rp.net>=minM && (rp.b>0?rp.net/rp.b*100:0)>=minRoi &&
+      r.buy<=maxP && r.age<=maxAge &&
+      (!terms.length||terms.some(t=>r.name.toLowerCase().includes(t)));
+  });
 }
 function filtered(){
   const on=chipsOn();
@@ -1006,8 +1162,11 @@ const COLS=[
 ];
 function renderFlips(){
   const bank=parseGp(cfg.bank), mm=maxMin();
-  let list=filtered().map(r=>Object.assign({},r,plan(r,bank,mm),{qty:0}))
-    .map(r=>(r.qty=r.q,r)).filter(r=>r.q>0);
+  let list=filtered().map(r=>{
+    const p=plan(r,bank,mm);
+    // margin/roi perrašomi pagal rodomas kainas, kad rikiavimas ir stulpeliai sutaptų
+    return Object.assign({},r,p,{qty:p.q,margin:p.unit,roi:p.recBuy>0?p.unit/p.recBuy*100:0});
+  }).filter(r=>r.q>0);
   renderSummary();
   if(sort.key==='profit'&&!sort.userSet)sort.key='perHour';
   const k=sort.key,d=sort.dir;
@@ -1023,8 +1182,8 @@ function renderFlips(){
       <img loading="lazy" src="${icon(r.icon)}" alt=""><span>${r.name}</span>
       ${r.members?'':'<span class="tag f2p">F2P</span>'}
       ${r.shaky?`<span class="tag warn2" title="Kaina greitai juda arba rinka reta (skirtumas tarp pirkimo ir pardavimo ${r.spread.toFixed(0)}%). Margin gali būti netikras.">⚠</span>`:''}</div></td>
-    <td class="g" title="${full(r.buy)}">${fmt(r.buy)}</td>
-    <td class="r" title="${full(r.sell)}">${fmt(r.sell)}</td>
+    <td class="g" title="statyk pirkimą ties ${full(recPrices(r).b)}">${exact(recPrices(r).b)}</td>
+    <td class="r" title="statyk pardavimą ties ${full(recPrices(r).s)}">${exact(recPrices(r).s)}</td>
     <td class="gold" title="mokestis ${full(r.tax)}">${fmt(r.margin)}</td>
     <td>${r.roi.toFixed(1)}%</td>
     <td class="d" title="limitas ${r.limit||'?'} / 4h · investicija ${full(r.cost)}">${r.qty}</td>
@@ -1213,16 +1372,25 @@ async function sendHook(content){
 /* ---------- BRANGESNI: mažas kiekis, didelė marža ----------
    Brangūs daiktai parduodami keliskart per parą, todėl valandinė apyvarta jiems
    beprasmė – skaičiuojama paros apyvarta ir realus laukimo laikas.               */
+/* GE SLOTAS UŽIMTAS ABIEM PUSĖM. Pastatai pirkimą — slotas užimtas. Grįžęs pastatai
+   pardavimą — slotas vis dar užimtas. Naujo pirkimo negali, kol neparduota. Todėl
+   vienam pilnam treidui reikia DVIEJŲ apsilankymų, o `hours` čia yra intervalas tarp
+   jų: per jį turi spėti užsipildyti viena pusė, ne abi.                             */
 function planSlow(r,bank,hours){
+  const rp=recPrices(r);                              // pelnas – nuo rodomų kainų
   const fs=Math.max(0.02,(r.volSell24/24)*CAPTURE);   // vnt./val., ką gali nupirkti
   const fb=Math.max(0.02,(r.volBuy24 /24)*CAPTURE);   // vnt./val., ką gali parduoti
-  const flowRate=1/(1/fs+1/fb);
-  const rate=Math.min(flowRate,r.limit?r.limit/4:flowRate);
+  const legRate=Math.min(fs,fb);                      // lėtesnė pusė lemia
+  const rate=Math.min(legRate,r.limit?r.limit/4:legRate);
   let q=Math.floor(rate*hours);
-  if(r.limit)q=Math.min(q,r.limit*Math.max(1,Math.floor(hours/4)));
+  // offer'į statai DABAR, tad kiekį riboja tik šiuo metu likęs limitas
+  if(r.limit)q=Math.min(q,limitLeft(r));
   if(bank>0)q=Math.min(q,Math.floor(bank/Math.max(1,r.buy+1)));
   q=Math.max(0,q);
-  return {q,hours:q>0?q/rate:0,profit:q*r.margin,cost:q*r.buy,perHour:q>0?rate*r.margin:0};
+  const legH=q>0?q/rate:0;              // kiek trunka viena pusė (pirkimas arba pardavimas)
+  const pilnas=legH*2;                  // pilnas treidas – abi pusės
+  return {q,hours:pilnas,legHours:legH,unit:rp.net,recBuy:rp.b,recSell:rp.s,
+    profit:q*rp.net,cost:q*rp.b,perHour:pilnas>0?q*rp.net/pilnas:0};
 }
 function renderBig(){
   const minP=parseGp($('#bMin').value), minM=parseGp($('#bMargin').value);
@@ -1232,8 +1400,9 @@ function renderBig(){
       r.buy>=minP && r.margin>=minM && r.hasDay && r.age<6*3600 &&
       Math.min(r.volBuy24,r.volSell24)>=minV &&      // sandoriai KIEKVIENOJE pusėje, ne bendrai
       (!qual||(r.sane&&r.trend>-4&&r.spread<=15)))
-    .map(r=>Object.assign({},r,planSlow(r,bank,hrs)))
-    .filter(r=>r.q>0)
+    .map(r=>{const p=planSlow(r,bank,hrs);
+      return Object.assign({},r,p,{margin:p.unit,roi:p.recBuy>0?p.unit/p.recBuy*100:0});})
+    .filter(r=>r.q>0&&r.margin>0)
     .sort((a,b)=>b.profit-a.profit).slice(0,80);
   $('#bStatus').textContent='rasta '+list.length;
   if(!list.length){
@@ -1247,9 +1416,9 @@ function renderBig(){
       <td class="l"><div class="item"><span class="star ${watch.has(r.id)?'on':''}" data-star="${r.id}">★</span>
         <img loading="lazy" src="${icon(r.icon)}" alt=""><span>${r.name}</span>
         ${r.thin?`<span class="tag warn2" title="Lėta rinka: per valandą tik ${r.volSell1} pardavimų / ${r.volBuy1} pirkimų. Kaina imama iš paros vidurkio, ne iš paskutinio sandorio.">lėta</span>`:''}</div></td>
-      <td class="g" title="${full(r.buy)}">${fmt(r.buy)}</td>
-      <td class="r" title="${full(r.sell)}">${fmt(r.sell)}</td>
-      <td class="gold" title="mokestis ${full(r.tax)}"><b>${fmt(r.margin)}</b></td>
+      <td class="g" title="statyk pirkimą ties ${full(recPrices(r).b)}">${exact(recPrices(r).b)}</td>
+      <td class="r" title="statyk pardavimą ties ${full(recPrices(r).s)}">${exact(recPrices(r).s)}</td>
+      <td class="gold" title="mokestis ${full(r.tax)}"><b>${exact(r.margin)}</b></td>
       <td>${r.roi.toFixed(1)}%</td>
       <td class="d">${r.limit||'?'}</td>
       <td>${r.q}</td>
@@ -1351,7 +1520,7 @@ function paintDips(){
    Sprendžia pagrindinę problemą: rekomendacijų sąrašas nuolat keičiasi, o tavo
    nupirktas daiktas turi likti matomas tol, kol jo neparduosi.                    */
 let positions=load('pos',[]), history=load('hist',[]);
-function savePos(){save('pos',positions);save('hist',history);updateBadge();}
+function savePos(){save('pos',positions);save('hist',history);rebuildLimits();updateBadge();}
 function updateBadge(){
   const b=$('#posBadge');if(!b)return;
   b.textContent=positions.length||'';
@@ -1359,9 +1528,11 @@ function updateBadge(){
 }
 function openBuyForm(id,defQty,defPrice){
   const r=S.rows.find(x=>x.id===id);if(!r)return;
+  // kainos imamos iš to paties skaičiavimo kaip plane – kitaip forma rodytų kitą pelną
+  const rp=recPrices(r);
   const q=defQty||plan(r,parseGp(cfg.bank),maxMin()).q||1;
-  const p=defPrice||r.buy+1;
-  const t=Math.max(p+1,r.sell-1);
+  const p=defPrice||rp.b;
+  const t=Math.max(p+1,rp.s);
   $('#pbox').innerHTML=`
     <div class="mhead"><img src="${icon(r.icon)}" alt=""><h2>${r.name}</h2></div>
     <div class="d" style="font-size:12px">Įrašyk tai, ką iš tikrųjų pastatei žaidime.</div>
@@ -1448,11 +1619,12 @@ function openNewFlipForm(){
     const r=S.rows.find(x=>x.id===+row.dataset.pick);if(!r)return;
     $$('#nList .nrow').forEach(x=>x.classList.remove('on'));row.classList.add('on');
     const q=Math.max(1,plan(r,parseGp(cfg.bank),maxMin()).q||1);
+    const rp=recPrices(r);
     $('#nRest').innerHTML=`
       <div class="pform">
         <label>Kiekis</label><input id="nQty" value="${q}">
-        <label>Pirkimo kaina</label><input id="nBuy" value="${r.buy+1}">
-        <label>Pardavimo tikslas</label><input id="nTgt" value="${Math.max(r.buy+2,r.sell-1)}">
+        <label>Pirkimo kaina</label><input id="nBuy" value="${rp.b}">
+        <label>Pardavimo tikslas</label><input id="nTgt" value="${Math.max(rp.b+1,rp.s)}">
         <label>Būsena</label><select id="nState">
           <option value="wait">Pastačiau pirkimą, dar laukiu</option>
           <option value="hold">Jau nupirkta, turiu</option></select>
@@ -1509,18 +1681,59 @@ function openEditForm(p){
   };
   $('#pmodal').classList.add('on');
 }
+/* Mažiausia pardavimo kaina, kuriai esant po mokesčio dar neliktum minuse.
+   Mokestis apvalinamas žemyn, tad tiksli riba randama pataisius įvertį.        */
+function breakEven(buy,name){
+  if(!(buy>0))return 0;
+  if(EXEMPT.has(String(name).toLowerCase())||buy<50)return buy;   // be mokesčio
+  const rate=(cfg.tax||0)/100;
+  if(rate<=0)return buy;
+  let s=Math.ceil(buy/(1-rate));
+  if(Math.floor(s*rate)>cfg.taxCap)s=buy+cfg.taxCap;              // mokestis atsimušęs į lubą
+  let guard=0;
+  while(s-taxOf(s,name)-buy<0&&guard++<64)s++;
+  while(s>buy&&s-1-taxOf(s-1,name)-buy>=0&&guard++<128)s--;
+  return s;
+}
 function hoursText(ms){
   const h=ms/36e5;
   if(h<1)return Math.round(h*60)+' min';
   if(h<24)return h.toFixed(1)+' val.';
   return Math.floor(h/24)+' d. '+Math.round(h%24)+' val.';
 }
+/* ĮSTRIGĘS OFFER'IS. Jei pirkimas kabo per ilgai, jis stovi eilėje už kitų – reikia
+   pakelti kainą. Jei laikai ir nesiparduoda, reikia nuleisti. Čia siūloma konkreti
+   kaina ir parodoma, kiek liks pelno.                                               */
+function rescue(p){
+  const h=(Date.now()-p.t)/36e5;
+  const r=S.rows.find(x=>x.id===p.id);
+  const at=(price)=>{const n=price-taxOf(price,p.name)-p.buy;return {nauja:price,net:n,total:n*p.qty};};
+  if(!r)return h>=3?{tipas:'nezinia',h}:null;
+  if(p.state==='wait'){
+    if(h<3)return null;
+    // jau siūlai tiek, kiek prašo pardavėjai – offer'is turėtų pildytis, jei rinka gyva
+    if(p.buy>=r.sell-1)return {tipas:'jau_aukstai',h,rinka:r.buy,rinkaHigh:r.sell};
+    const sil=Math.round(r.buy+(r.sell-r.buy)*0.35);   // kaina, kuria realiai užsipildo
+    if(sil<=p.buy)return {tipas:'jau_rinkoje',h,rinka:r.buy,rinkaHigh:r.sell};
+    return Object.assign({tipas:'pirkimas',h},(()=>{const n=p.target-taxOf(p.target,p.name)-sil;
+      return {nauja:sil,net:n,total:n*p.qty};})());
+  }
+  // turiu prekę, laukiu pardavimo
+  if(h<4)return null;
+  // siūloma TIK reali rinkos kaina – anksčiau buvo forsuojama virš pirkimo kainos,
+  // todėl esant nuostoliui rodydavo neįmanomą, virš rinkos esančią kainą
+  const rink=recPrices(r).s;
+  if(rink>=p.target)return Object.assign({tipas:'gali_parduoti',h},at(rink));
+  return Object.assign({tipas:'pardavimas',h},at(rink));
+}
 function posLive(p){
   const r=S.rows.find(x=>x.id===p.id);
   const sellNow=r?r.sell:0, buyNow=r?r.buy:0;
-  const net=sellNow?sellNow-taxOf(sellNow,p.name)-p.buy:0;
+  const nowRec=r?recPrices(r).s:0;      // kokią pardavimo kainą programa siūlytų dabar
+  // „Jei parduočiau" skaičiuojama BŪTENT nuo tos kainos, kuri rodoma „Siūloma dabar"
+  const net=nowRec?nowRec-taxOf(nowRec,p.name)-p.buy:0;
   const tgtNet=p.target-taxOf(p.target,p.name)-p.buy;
-  return {r,sellNow,buyNow,net,total:net*p.qty,tgtNet,tgtTotal:tgtNet*p.qty,
+  return {r,sellNow,buyNow,nowRec,net,total:net*p.qty,tgtNet,tgtTotal:tgtNet*p.qty,
     reached:sellNow>0&&sellNow>=p.target};
 }
 function renderPositions(){
@@ -1539,7 +1752,7 @@ function renderPositions(){
   if(!positions.length){
     $('#posOut').innerHTML='<div class="empty">Nieko neturi. Skeneryje ar „Ką daryti dabar" sąraše paspausk <b>Pirkau</b>, kai pastatai offer\'į žaidime.</div>';
   }else{
-    let h='<table><thead><tr><th class="l">Daiktas</th><th>Būsena</th><th>Kiekis</th><th>Pirkau už</th><th>Parduoti už</th><th>Kaina dabar</th><th>Jei parduočiau</th><th>Laikas</th><th></th></tr></thead><tbody>';
+    let h='<table><thead><tr><th class="l">Daiktas</th><th>Būsena</th><th>Kiekis</th><th>Pirkau už</th><th title="mažiausia kaina, už kurią pardavus po mokesčio dar neliktum minuse">Min. be nuostolio</th><th title="kaina, kurią siūliau pirkimo metu">Tikslas (kai pirkai)</th><th title="ką siūlyčiau šią minutę">Siūloma dabar</th><th title="skaičiuojama nuo stulpelio „Siūloma dabar", ne nuo tikslo">Jei parduočiau dabar<br><span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:10px">nuo „Siūloma dabar"</span></th><th>Laikas</th><th></th></tr></thead><tbody>';
     for(const p of positions){
       const L=posLive(p);
       h+=`<tr data-id="${p.id}">
@@ -1547,10 +1760,17 @@ function renderPositions(){
           ${p.state==='hold'&&L.reached?'<span class="tag sell">PARDUOK</span>':''}</div></td>
         <td data-l="Būsena" class="${p.state==='wait'?'d':'g'}">${p.state==='wait'?'laukiu pirkimo':'turiu'}</td>
         <td data-l="Kiekis">${p.qty}</td>
-        <td data-l="Pirkau už" class="d">${fmt(p.buy)}</td>
-        <td data-l="Parduoti už" class="gold">${fmt(p.target)}</td>
-        <td data-l="Kaina dabar" class="${L.sellNow>=p.target?'g':L.sellNow<p.buy?'r':''}" title="dabartinė pardavimo kaina · pirkimo ${full(L.buyNow)}">${L.sellNow?fmt(L.sellNow):'–'}</td>
-        <td data-l="Jei parduočiau" class="${L.total>=0?'g':'r'}"><b>${L.total>=0?'+':''}${fmt(L.total)}</b></td>
+        <td data-l="Pirkau už" class="d">${exact(p.buy)}</td>
+        ${(()=>{const be=breakEven(p.buy,p.name);
+          return `<td data-l="Min. be nuostolio" class="${L.nowRec>=be?'d':'r'}"
+            title="pardavus pigiau nei ${full(be)} liktum minuse (mokestis ${full(taxOf(be,p.name))})">${exact(be)}</td>`;})()}
+        <td data-l="Tikslas (kai pirkai)" class="gold" title="kaina, kurią programa siūlė pirkimo metu — ji nesikeičia"><b>${exact(p.target)}</b></td>
+        <td data-l="Siūloma dabar" class="${L.nowRec>=p.target?'g':L.nowRec<p.buy?'r':'d'}"
+          title="ką rinka siūlo šią minutę · pirkimo pusė ${full(L.buyNow)}">${L.nowRec?exact(L.nowRec):'–'}${
+            L.nowRec&&L.nowRec!==p.target?` <span class="d" style="font-size:11px">(${L.nowRec>p.target?'+':''}${fmt(L.nowRec-p.target)})</span>`:''}</td>
+        <td data-l="Jei parduočiau dabar" class="${L.total>=0?'g':'r'}"
+          title="skaičiuota nuo „Siūloma dabar" kainos ${full(L.nowRec)}: (${full(L.nowRec)} − ${full(taxOf(L.nowRec,p.name))} mokesčio − ${full(p.buy)}) × ${p.qty}"><b>${L.total>=0?'+':''}${fmt(L.total)}</b>
+          <span class="d" style="font-size:11px">(${full(L.net)}/vnt.)</span></td>
         <td data-l="Laikas" class="${Date.now()-p.t>12*36e5?'r':Date.now()-p.t>4*36e5?'gold':'d'}"
           title="${p.state==='wait'?'kiek laiko kabo pirkimo offer\'is':'kiek laiko laikai'}">${hoursText(Date.now()-p.t)}</td>
         <td class="acts" style="text-align:right;white-space:nowrap">
@@ -1558,7 +1778,34 @@ function renderPositions(){
           <button class="btn-buy" data-act="edit" data-pid="${p.pid}" title="pakeisti kiekį, jei užsipildė tik dalis">✎ Kiekis</button>
           <button class="btn-buy" data-act="sold" data-pid="${p.pid}">Parduota</button>
           <button class="btn-buy" style="background:#2a1a18;border-color:#5c332f;color:#e05b4b" data-act="del" data-pid="${p.pid}">✕</button>
-        </td></tr>`;
+        </td></tr>
+        ${(()=>{const s=rescue(p);if(!s)return '';
+          return `<tr class="fix" data-id="${p.id}"><td colspan="10">
+            ⏱ ${(()=>{const T=hoursText(s.h*36e5);switch(s.tipas){
+              case 'pirkimas': return s.net>0
+                ?`Pirkimas kabo <b>${T}</b> — greičiausiai stovi eilėje už kitų. Pabandyk pakelti iki
+                  <b class="g">${full(s.nauja)}</b>; pelnas liktų <b class="gold">${full(s.total)}</b> (${full(s.net)}/vnt.).`
+                :`Pirkimas kabo <b>${T}</b> — kelti kainą <b class="r">neapsimoka</b>: ties ${full(s.nauja)}
+                  flipas jau būtų nuostolingas (${full(s.net)}/vnt.). Verčiau <b>atšauk offer'į</b>
+                  ir paleisk pinigus kitam daiktui.`;
+              case 'jau_aukstai': return `Pirkimas kabo <b>${T}</b>, nors siūlai <b>${full(p.buy)}</b> —
+                tiek pat ar daugiau, nei prašo pardavėjai (rinka ${full(s.rinka)} / ${full(s.rinkaHigh)}).
+                Vadinasi, šiuo metu tiesiog niekas neparduoda. Kelti kainos <b>nereikia</b> —
+                arba palauk, arba atšauk ir imk aktyvesnį daiktą.`;
+              case 'jau_rinkoje': return `Pirkimas kabo <b>${T}</b>, bet tavo kaina <b>${full(p.buy)}</b>
+                jau yra rinkos lygyje (${full(s.rinka)} / ${full(s.rinkaHigh)}). Kėlimas mažai ką duotų —
+                arba palauk, arba atšauk ir paskirstyk pinigus į kelis mažesnius pirkimus.`;
+              case 'gali_parduoti': return `Laikai <b>${T}</b>, o rinka jau pasiekė tavo tikslą.
+                <b>Statyk pardavimą dabar</b> ties <b class="g">${full(s.nauja)}</b> —
+                pelnas <b class="gold">${full(s.total)}</b> (${full(s.net)}/vnt.).
+                Jei pardavimas jau pastatytas ir nesipildo, nuleisk kelis gp.`;
+              case 'pardavimas': return `Laikai <b>${T}</b>, o tikslo ${full(p.target)} rinka nebepasiekia.
+                Dabar realiai parduotum už <b class="r">${full(s.nauja)}</b>; pelnas
+                <b class="${s.net>0?'gold':'r'}">${full(s.total)}</b> (${full(s.net)}/vnt.).`;
+              default: return `Stovi <b>${T}</b>, bet šiuo metu neturiu šviežių šio daikto kainų
+                (per parą juo beveik neprekiaujama). Patarimo duoti negaliu — pažiūrėk grafiką.`;
+            }})()}
+            </td></tr>`;})()}`;
     }
     $('#posOut').innerHTML=h+'</tbody></table>';
   }
@@ -1576,7 +1823,7 @@ function renderPositions(){
         <td class="${s.profit>=0?'g':'r'}"><b>${s.profit>=0?'+':''}${fmt(s.profit)}</b></td>
         <td class="d">${fmt(Math.round(s.profit/s.n))}</td>
         <td class="d">${s.avgH!=null?hoursText(s.avgH*36e5):'–'}</td>
-        <td class="d">${r?fmt(r.buy)+' → '+fmt(r.sell):'–'}</td>
+        <td class="d">${r?exact(recPrices(r).b)+' → '+exact(recPrices(r).s):'–'}</td>
         <td class="${net==null?'d':net>0?'g':'r'}">${net==null?'–':(net>0?'+':'')+fmt(net)}</td>
         <td style="text-align:right">${r&&net>0?`<button class="btn-buy" data-bought="${s.id}">Pirkti vėl</button>`:''}</td>
       </tr>`;
@@ -1620,7 +1867,7 @@ function renderWatch(){
     const q=qtyFor(r,bank);
     h+=`<tr data-id="${r.id}"><td class="l"><div class="item"><span class="star on" data-star="${r.id}">★</span>
       <img loading="lazy" src="${icon(r.icon)}" alt=""><span>${r.name}</span></div></td>
-      <td class="g">${fmt(r.buy)}</td><td class="r">${fmt(r.sell)}</td><td class="gold">${fmt(r.margin)}</td>
+      <td class="g">${exact(recPrices(r).b)}</td><td class="r">${exact(recPrices(r).s)}</td><td class="gold">${fmt(r.margin)}</td>
       <td>${r.roi.toFixed(1)}%</td><td class="gold"><b>${fmt(q*r.margin)}</b></td>
       <td class="d">${fmt(r.vol1h)}</td>
       <td class="${r.trend<-3?'r':r.trend>3?'g':'d'}">${r.trend>0.5?'▲':r.trend<-0.5?'▼':'●'} ${Math.abs(r.trend).toFixed(1)}%</td></tr>`;
@@ -1629,6 +1876,7 @@ function renderWatch(){
 }
 
 function render(){
+  rebuildLimits();
   renderToday();
   renderChips();
   renderFlips();
@@ -1877,17 +2125,31 @@ $('#bank').addEventListener('blur',()=>{
 });
 document.addEventListener('change',e=>{
   if(e.target.id==='slots'){cfg.slots=parseInt(e.target.value)||4;save('cfg',cfg);renderSummary();}
-  if(e.target.id==='tChecks'||e.target.id==='tSlots'){
+  if(e.target.id==='tChecks'||e.target.id==='tSlots'||e.target.id==='tSpeed'){
     if(e.target.id==='tChecks')cfg.checks=parseInt(e.target.value)||3;
+    else if(e.target.id==='tSpeed')cfg.speed=parseFloat(e.target.value)||0;
     else cfg.slots=parseInt(e.target.value)||4;
     save('cfg',cfg);save('dayplan',null);renderToday();
   }
 });
+/* Laukeliai gyvena viduje to bloko, kurį renderToday perpiešia. Perpiešus laukelis
+   sunaikinamas ir dingsta žymeklis – todėl perpiešiama su uždelsimu ir grąžinamas
+   žymeklio vietoje. Anksčiau po kiekvieno simbolio tekdavo spausti iš naujo.        */
+let inputTimer=null;
+function deferRender(id,extra){
+  clearTimeout(inputTimer);
+  inputTimer=setTimeout(()=>{
+    const el=$('#'+id), pos=el?el.selectionStart:null;
+    renderToday(); if(extra)extra();
+    const el2=$('#'+id);
+    if(el2){el2.focus();try{el2.setSelectionRange(pos,pos);}catch(e){}}
+  },700);
+}
 document.addEventListener('input',e=>{
-  if(e.target.id==='tGoal'){cfg.goal=e.target.value;save('cfg',cfg);renderToday();}
+  if(e.target.id==='tGoal'){cfg.goal=e.target.value;save('cfg',cfg);deferRender('tGoal');}
   if(e.target.id==='tBank'){
     cfg.bank=e.target.value;$('#bank').value=e.target.value;save('cfg',cfg);
-    renderToday();renderFlips();
+    deferRender('tBank',()=>renderFlips());
   }
 });
 ['sthr','svol','sminp'].forEach(id=>$('#'+id).addEventListener('input',()=>{readCfg();scanSignals();}));
@@ -1910,12 +2172,68 @@ function drawSearch(){
     </div>`;}).join('')
     :'<div class="d" style="padding:9px 11px;font-size:12px">Nieko nerasta.</div>';
 }
+/* Vienkartinis treidas: viena konkreti suma, vienas slotas. Biudžetas nedalijamas. */
+function findOne(){
+  const suma=parseGp($('#oneSum').value), mins=parseFloat($('#oneMin').value)||20;
+  const el=$('#oneOut');
+  if(suma<100){el.innerHTML='<div class="empty">Įrašyk sumą, pvz. 1330k arba 1.33m.</div>';return;}
+  // trumpiems langams tinka valandinė apyvarta, ilgiems – paros (stabilesnė)
+  const ilgas=mins>=120;
+  const l=S.rows.filter(r=>r.sane&&r.hasDay&&r.trend>-3&&r.spread<=15&&limitLeft(r)>0&&
+      (ilgas?(Math.min(r.volBuy24,r.volSell24)>=40&&r.age<6*3600):(!r.thin&&r.age<1800)))
+    .map(r=>{const p=ilgas?planSlow(r,suma,mins/60):plan(r,suma,mins);
+      return Object.assign({},r,p,{minutes:ilgas?p.hours*60:p.minutes});})
+    .filter(r=>r.q>0&&r.profit>0&&r.minutes<=mins*1.05)
+    .sort((a,b)=>b.profit-a.profit).slice(0,5);
+  if(!l.length){el.innerHTML='<div class="empty">Tokiai sumai ir laikui nieko tinkamo. Pabandyk ilgesnį laiką arba kitą sumą.</div>';return;}
+  el.innerHTML=`<div class="steps">${l.map((r,i)=>`
+    <div class="step" data-id="${r.id}">
+      <div class="snum" style="background:#6aa9e0">${i+1}</div>
+      <img loading="lazy" src="${icon(r.icon)}" alt="">
+      <div class="sbody">
+        <div class="sname">${r.name}</div>
+        <div class="sline"><span class="d">Pirk</span> <b>${r.q} vnt.</b> <span class="d">po</span>
+          <b class="g">${full(r.recBuy)}</b> <span class="d">= ${fmt(r.cost)} gp</span>
+          <span class="d">(lieka ${fmt(suma-r.cost)})</span></div>
+        <div class="sline"><span class="d">Parduok po</span> <b class="r">${full(r.recSell)}</b>
+          <span class="d">· ${full(r.unit)} už vienetą · ~${r.minutes>=90?(r.minutes/60).toFixed(1)+' val.':Math.round(r.minutes)+' min'}</span></div>
+        ${(()=>{
+          const fs=Math.max(0.5,(mins>=120?r.volSell24/24:r.volSell1)*CAPTURE);
+          const fb=Math.max(0.5,(mins>=120?r.volBuy24/24:r.volBuy1)*CAPTURE);
+          const qLaikas=Math.floor((1/(1/fs+1/fb))*(mins/60));
+          const qLim=r.limit?limitLeft(r):Infinity, qPin=Math.floor(suma/r.recBuy);
+          const m=Math.min(qLaikas,qLim,qPin);
+          if(m===qPin)return `<div class="sline d" style="font-size:12px">Kiekį riboja <b>pinigai</b> — daugiau lėšų duotų daugiau.</div>`;
+          const kas=m===qLim?'4 val. pirkimo limitas':'laikas';
+          return `<div class="sline gold" style="font-size:12px">Kiekį riboja <b>${kas}</b>, ne pinigai
+            <span class="d">(už tiek laiko spėtum ${qLaikas} vnt., pinigų užtektų ${qPin}).
+            Duok daugiau laiko — pelnas augs beveik tiesiškai.</span></div>`;})()}
+      </div>
+      <div class="sprofit">
+        <div class="tlabel">PELNAS</div><div class="gold"><b>${fmt(r.profit)}</b></div>
+        <button class="btn-buy" data-bought="${r.id}" data-q="${r.q}" data-p="${r.recBuy}">Pirkau</button>
+      </div>
+    </div>`).join('')}</div>`;
+}
+$('#oneGo').onclick=findOne;
+$('#oneSum').addEventListener('keydown',e=>{if(e.key==='Enter')findOne();});
+$('#oneMin').addEventListener('change',()=>{if($('#oneOut').innerHTML)findOne();});
 $('#tSearch').addEventListener('input',drawSearch);
 $('#tResults').addEventListener('click',e=>{
   const row=e.target.closest('[data-id]');if(row)openItem(+row.dataset.id);
 });
 $('#rescan').onclick=()=>{for(const k in tsCache)delete tsCache[k];for(const k in tsCacheH)delete tsCacheH[k];scanSignals();};
 $('#refresh').onclick=()=>refresh(true);
+$('#presetFast').onclick=()=>{
+  // apyvarta vienetais laikoma žema tyčia: brangūs daiktai apsuka mažai vienetų, bet daug gp.
+  // Realų greitį garantuoja „Maks. apsisukimas", o kokybę – patikimų kainų juostelė.
+  const p={fvol:'50',fmargin:'1',froi:'0.5',fmax:'',fage:'300',fmin:'10'};
+  for(const k in p)$('#'+k).value=p[k];
+  $('#q').value='';
+  cfg.chips=['sane','nodown','bal'];      // patikimos kainos + ne krentantys + abi pusės aktyvios
+  sort={key:'perHour',dir:-1,userSet:true};
+  save('cfg',cfg);readCfg();renderChips();renderFlips();
+};
 $('#reset').onclick=()=>{
   const def={fvol:'200',fmargin:'1',froi:'0.5',fmax:'',fage:'600',fmin:'30'};
   for(const k in def){$('#'+k).value=def[k];}$('#q').value='';
